@@ -1,99 +1,123 @@
 import csv
 import pickle
-from collections import Counter
 import math
 import os
+import numpy as np
+from collections import defaultdict, Counter
 
-# Custom string for output file
-custom_string = "2500"
-output_dir = r"D:\BITS Acad\4-1\nlp_assn_1\Results"
-os.makedirs(output_dir, exist_ok=True)
-output_file = os.path.join(output_dir, f"hindi_result_{custom_string}.txt")
+# Load trained model
+with open(r"D:\BITS Acad\4-1\nlp_assn_1\Models\hindi_2500_prob.pkl", "rb") as f:
+    model = pickle.load(f)
 
-# Helper: generate unigrams + bigrams
-def generate_ngrams(tokens, n=2):
+def generate_ngrams(tokens):
     unigrams = tokens
     bigrams = ["_".join(tokens[i:i+2]) for i in range(len(tokens)-1)]
     return unigrams + bigrams
 
-print("Loading trained model...")
-with open(r"D:\BITS Acad\4-1\nlp_assn_1\Models\hindi_2500.pkl", "rb") as f:
-    model = pickle.load(f)
-
-category_counts = model["category_counts"]
-all_categories = model["all_categories"]
-print(f"Loaded model with {len(all_categories)} categories.")
-
-# Load test set
-print("Loading test dataset...")
-test_file = r"D:\BITS Acad\4-1\nlp_assn_1\datasets\hindi\hindi_test.csv"
-texts, labels = [], []
-
-with open(test_file, "r", encoding="utf-8") as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        texts.append(row["text"])
-        labels.append(row["labels"].split(","))
-
-print(f"Loaded {len(texts)} test samples.")
-
-# Evaluation loop
-correct, total = 0, 0
-tp, fp, fn = 0, 0, 0
-log_prob_sum, token_count = 0, 0
-
-print("Evaluating...")
-for i, text in enumerate(texts):
+# Classification function
+def classify(text, model):
     tokens = text.split()
     ngrams = generate_ngrams(tokens)
 
     scores = {}
-    for cat in all_categories:
-        cat_counter = category_counts[cat]
-        scores[cat] = sum(cat_counter[ng] for ng in ngrams)
+    for label in model["all_categories"]:
+        log_prob = 0.0
+        for ngram in ngrams:
+            if ngram in model["vocab"]:
+                log_prob += math.log(model["category_probs"][label][ngram])
+            else:
+                total = model["total_counts"][label] + model["alpha"] * len(model["vocab"])
+                log_prob += math.log(model["alpha"] / total)
+        scores[label] = log_prob
 
-    predicted = sorted(scores, key=scores.get, reverse=True)[:1]
+    return max(scores, key=scores.get), scores
 
-    # Accuracy check (only valid if gold label exists in training categories)
-    gold = [g for g in labels[i] if g in all_categories]
+# Step 1: Evaluate on test set
+test_file = r"D:\BITS Acad\4-1\nlp_assn_1\datasets\hindi\hindi_test.csv"
 
-    if not gold:
-        # test label not in training → impossible to predict → count as FN
-        fn += 1
-    else:
-        if any(p in gold for p in predicted):
-            correct += 1
-            tp += 1
-        else:
-            fp += 1
-            fn += 1
-    total += 1
+true_labels = []
+pred_labels = []
+log_likelihood = 0
+total_ngrams = 0
 
-    # Perplexity calculation
-    for ng in ngrams:
-        count = sum(category_counts[c][ng] for c in all_categories)
-        prob = (count + 1) / (sum(sum(cat_counter.values()) for cat_counter in category_counts.values()) + len(category_counts))
-        log_prob_sum -= math.log(prob)
-        token_count += 1
+with open(test_file, "r", encoding="utf-8") as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        text = row["text"]
+        labels = row["labels"].split(",")
+        true_label = labels[0]  # use first label if multiple
 
-    if (i + 1) % 100 == 0:
-        print(f"Processed {i+1}/{len(texts)} samples...")
+        pred, scores = classify(text, model)
 
-# Final metrics
-accuracy = correct / total if total > 0 else 0
-precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
-perplexity = math.exp(log_prob_sum / token_count) if token_count > 0 else float("inf")
+        true_labels.append(true_label)
+        pred_labels.append(pred)
 
-# Write results to file
-print("Writing results to file...")
-with open(output_file, "w", encoding="utf-8") as out:
-    out.write("Intrinsic Evaluation (Perplexity): {:.3f}\n".format(perplexity))
-    out.write("Extrinsic Evaluation (Classification Metrics):\n")
-    out.write("  Accuracy  : {:.3f}\n".format(accuracy))
-    out.write("  Precision : {:.3f}\n".format(precision))
-    out.write("  Recall    : {:.3f}\n".format(recall))
-    out.write("  F1-score  : {:.3f}\n".format(f1))
+        # Compute log likelihood for perplexity
+        tokens = text.split()
+        ngrams = generate_ngrams(tokens)
+        for ngram in ngrams:
+            if ngram in model["vocab"]:
+                log_likelihood += math.log(model["category_probs"][pred][ngram])
+            else:
+                total = model["total_counts"][pred] + model["alpha"] * len(model["vocab"])
+                log_likelihood += math.log(model["alpha"] / total)
+        total_ngrams += len(ngrams)
 
-print(f"✅ Evaluation complete. Results saved to {output_file}")
+# Convert to numpy arrays for easy calculation
+true_labels = np.array(true_labels)
+pred_labels = np.array(pred_labels)
+
+# Step 2: Compute metrics manually
+unique_labels = list(set(true_labels) | set(pred_labels))
+
+# Accuracy
+accuracy = np.mean(true_labels == pred_labels)
+
+# Precision, Recall, F1 (macro-averaged)
+precisions, recalls, f1s = [], [], []
+
+for label in unique_labels:
+    tp = np.sum((pred_labels == label) & (true_labels == label))
+    fp = np.sum((pred_labels == label) & (true_labels != label))
+    fn = np.sum((pred_labels != label) & (true_labels == label))
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    precisions.append(precision)
+    recalls.append(recall)
+    f1s.append(f1)
+
+precision_macro = np.mean(precisions)
+recall_macro = np.mean(recalls)
+f1_macro = np.mean(f1s)
+
+# Intrinsic metric: Perplexity
+perplexity = math.exp(-log_likelihood / total_ngrams)
+
+# Step 3: Prepare results string
+results = []
+results.append("===== Evaluation Results =====")
+results.append(f"Intrinsic Evaluation (Perplexity): {perplexity:.3f}")
+results.append("Extrinsic Evaluation (Classification Metrics):")
+results.append(f"  Accuracy  : {accuracy:.3f}")
+results.append(f"  Precision : {precision_macro:.3f}")
+results.append(f"  Recall    : {recall_macro:.3f}")
+results.append(f"  F1-score  : {f1_macro:.3f}")
+results.append("=================================")
+
+results_str = "\n".join(results)
+
+# Print to console
+print(results_str)
+
+# Step 4: Save to file
+output_dir = r"D:\BITS Acad\4-1\nlp_assn_1\Results"
+os.makedirs(output_dir, exist_ok=True)
+output_file = os.path.join(output_dir, "hindi_test_eval.txt")
+
+with open(output_file, "w", encoding="utf-8") as f:
+    f.write(results_str)
+
+print(f"\nResults saved to: {output_file}")

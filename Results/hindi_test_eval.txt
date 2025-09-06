@@ -1,0 +1,8 @@
+===== Evaluation Results =====
+Intrinsic Evaluation (Perplexity): 15057.259
+Extrinsic Evaluation (Classification Metrics):
+  Accuracy  : 0.635
+  Precision : 0.446
+  Recall    : 0.435
+  F1-score  : 0.419
+=================================

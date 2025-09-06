@@ -1,6 +1,0 @@
-Intrinsic Evaluation (Perplexity): 15115.302
-Extrinsic Evaluation (Classification Metrics):
-  Accuracy  : 0.349
-  Precision : 0.349
-  Recall    : 0.349
-  F1-score  : 0.349
