@@ -2,8 +2,6 @@ hello to the assignment..
 
 INSTALL GIT YOU MINGWITS
 
-Hindi Dataset->[Category,Headline,Content]
-
 ## N-Grams
 
 Testing:-
